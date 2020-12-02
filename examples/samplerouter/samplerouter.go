@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"github.com/7thzero/ratelimiter"
 	"strings"
+	"sync"
 	"time"
 )
 
 type SampleRouter struct{
 	throttler map[string]ratelimiter.RateLimit
+	throttlerMtx sync.Mutex						// Ensures we don't have a race condition when accessing throttler
 }
 
 //
@@ -18,6 +20,7 @@ func (sr *SampleRouter) Init(){
 	// Guard against re-initialization. Only initialize a new map on creation
 	if !sr.isInitted(){
 		sr.throttler = make(map[string]ratelimiter.RateLimit)
+		sr.throttlerMtx = sync.Mutex{}
 	}
 }
 
@@ -68,6 +71,7 @@ func (sr *SampleRouter) Route(writer http.ResponseWriter, request *http.Request)
 //
 // leverages the rate limiter to check if DOS is suspected
 func (sr *SampleRouter) dosShield(host string) bool{
+	sr.throttlerMtx.Lock()
 	// Ensure we have an entry for the host if it doesn't already exist
 	if _, exists := sr.throttler[host]; !exists{
 		limiter := ratelimiter.RateLimit{}
@@ -78,5 +82,6 @@ func (sr *SampleRouter) dosShield(host string) bool{
 	hostLimit := sr.throttler[host]				// Get the throttler for this host
 	isRateLimited := hostLimit.IsRateLimited()	// Records the access attempt and checks if this connection should be throttled
 	sr.throttler[host] = hostLimit				// Re-assign the RateLimiter to record the updated access attempt
+	sr.throttlerMtx.Unlock()
 	return isRateLimited
 }
